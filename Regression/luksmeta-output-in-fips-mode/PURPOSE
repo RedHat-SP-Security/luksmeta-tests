@@ -1,0 +1,3 @@
+PURPOSE of /CoreOS/luksmeta/Regression/luksmeta-output-in-fips-mode
+Description: Check if luksmeta doesn't print any output to STDOUT while FIPS is enabled
+Author: Martin Zeleny <mzeleny@redhat.com>
