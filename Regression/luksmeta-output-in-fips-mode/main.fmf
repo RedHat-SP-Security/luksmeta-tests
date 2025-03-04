@@ -13,6 +13,7 @@ tag:
 - CI-Tier-1
 - CI-Tier-1-FIPS
 - Tier1
+- ImageMode
 tier: '1'
 extra-summary: /CoreOS/luksmeta/Regression/luksmeta-output-in-fips-mode
 extra-task: /CoreOS/luksmeta/Regression/luksmeta-output-in-fips-mode
