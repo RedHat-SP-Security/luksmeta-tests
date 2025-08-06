@@ -1,27 +1,29 @@
 summary: luksmeta output with in FIPS mode
-description: Check if luksmeta doesn't print any output to STDOUT while FIPS is enabled
+description: Check if luksmeta doesn't print any output to STDOUT while FIPS is 
+    enabled
 contact: Martin Zelený <mzeleny@redhat.com>
 component:
-- luksmeta
+  - luksmeta
 test: ./runtest.sh
 recommend:
-- luksmeta
-- cryptsetup
+  - luksmeta
+  - cryptsetup
 duration: 5m
 enabled: true
 tag:
-- CI-Tier-1
-- CI-Tier-1-FIPS
-- Tier1
-- ImageMode
+  - CI-Tier-1
+  - CI-Tier-1-FIPS
+  - Tier1
+  - ImageMode
 tier: '1'
 extra-summary: /CoreOS/luksmeta/Regression/luksmeta-output-in-fips-mode
 extra-task: /CoreOS/luksmeta/Regression/luksmeta-output-in-fips-mode
 extra-nitrate: TC#0608220
 adjust:
--   enabled: false
+  - enabled: false
     when: distro < rhel-8
     continue: false
--   enabled: false
+  - enabled: false
     when: distro ~< rhel-8.2
     continue: false
+id: 92ed5322-4a8d-4a3f-b606-d7b392b8d35b
