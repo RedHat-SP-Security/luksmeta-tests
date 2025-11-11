@@ -1,0 +1,7 @@
+Description: Test storing LARGE metadata to LUKS1 device
+Owner: Sergio Correia <scorreia@redhat.com>
+RunFor: luksmeta
+RunTest: ./test.sh
+Path: /mnt/tests/Security/large-metadata
+Requires: luksmeta cryptsetup util-linux util-linux-core xfsprogs
+TestTime: 5m
