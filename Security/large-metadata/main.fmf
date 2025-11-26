@@ -2,7 +2,7 @@ summary: Test storing LARGE metadata to LUKS1 device
 contact: Sergio Correia <scorreia@redhat.com>
 component:
   - luksmeta
-test: ./test.sh
+test: ./runtest.sh
 recommend:
   - luksmeta
   - cryptsetup
