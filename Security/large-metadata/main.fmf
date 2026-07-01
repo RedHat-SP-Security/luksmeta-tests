@@ -1,4 +1,8 @@
 summary: Test storing LARGE metadata to LUKS1 device
+description: |
+    Verify that luksmeta correctly rejects storing metadata that exceeds the
+    LUKS1 header capacity and that the existing LUKS device data remains intact
+    after the failed operation.
 contact: Sergio Correia <scorreia@redhat.com>
 component:
   - luksmeta
