@@ -1,5 +1,8 @@
 summary: runs luksmeta on a non-LUKS block device
-description: ''
+description: |
+    Verify that luksmeta returns a proper error message when run against a
+    non-LUKS block device, exiting with code 74 and reporting "Unable to read
+    LUKSv1 header" instead of an I/O error.
 contact: Martin Zelený <mzeleny@redhat.com>
 test: ./runtest.sh
 recommend:
