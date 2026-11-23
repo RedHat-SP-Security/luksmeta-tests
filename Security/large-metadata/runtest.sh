@@ -61,6 +61,41 @@ rlJournalStart
         rlRun "cryptsetup open ${LUKS_DEVICE} ${DEVNAME} <<< ${LUKS_PW}" 0 "Open LUKS device for verification"
         rlRun "mount /dev/mapper/${DEVNAME} /mnt" 0 "Mounting the device for verification"
         rlRun "test $(cat /mnt/luks1-test) = redhat" 0 "Check the test file is there with the right contents"
+        rlRun "umount /mnt" 0 "Umounting the device"
+        rlRun "cryptsetup close ${DEVNAME}" 0 "Closing the LUKS device"
+    rlPhaseEnd
+
+    rlPhaseStartTest "Gap boundary with slot 0 occupied"
+        rlRun "luksmeta init -f -d ${LUKS_DEVICE}" 0 "Re-initialize device with luksmeta"
+        rlRun "dd if=/dev/urandom of=slot0-data bs=4096 count=1" 0 "Create 4KB file for slot 0"
+        rlRun "luksmeta save -d ${LUKS_DEVICE} -s 0 -u cb6e8904-81e2-4c7e-9a1a-0c8c2d2b2e4f < slot0-data" 0 "Pre-populate slot 0 with metadata"
+        rlRun "dd if=/dev/urandom of=1M-file bs=1M count=1" 0 "Create 1MB file for the test"
+        rlRun -s "luksmeta save -d ${LUKS_DEVICE} -s 1 -u 70e213ff-61fb-4dae-847e-d67b593f230b < 1M-file" 73 "Store large metadata to slot 1 with slot 0 occupied"
+        rlAssertGrep "Insufficient space in the LUKS header" "${rlRun_LOG}"
+        rlRun "rm -f \$rlRun_LOG" 0
+        rlRun "luksmeta load -d ${LUKS_DEVICE} -s 0 -u cb6e8904-81e2-4c7e-9a1a-0c8c2d2b2e4f > slot0-verify" 0 "Load slot 0 metadata back"
+        rlRun "diff slot0-data slot0-verify" 0 "Verify slot 0 metadata is intact"
+        rlRun "cryptsetup open ${LUKS_DEVICE} ${DEVNAME} <<< ${LUKS_PW}" 0 "Open LUKS device for verification"
+        rlRun "mount /dev/mapper/${DEVNAME} /mnt" 0 "Mounting the device for verification"
+        rlRun "test $(cat /mnt/luks1-test) = redhat" 0 "Check the encrypted payload is not corrupted"
+        rlRun "umount /mnt" 0 "Umounting the device"
+        rlRun "cryptsetup close ${DEVNAME}" 0 "Closing the LUKS device"
+    rlPhaseEnd
+
+    rlPhaseStartTest "Overlap check with large existing entry"
+        rlRun "luksmeta init -f -d ${LUKS_DEVICE}" 0 "Re-initialize device with luksmeta"
+        rlRun "dd if=/dev/urandom of=large-entry bs=4096 count=4" 0 "Create 16KB file (larger than 2 pages/8192 bytes)"
+        rlRun "luksmeta save -d ${LUKS_DEVICE} -s 1 -u 70e213ff-61fb-4dae-847e-d67b593f230b < large-entry" 0 "Save 16KB entry to slot 1"
+        rlRun "dd if=/dev/urandom of=small-entry bs=512 count=1" 0 "Create 512B file for overlap attempt"
+        rlRun -s "luksmeta save -d ${LUKS_DEVICE} -s 2 -u ab4a6a22-15e5-4f92-b3c2-d7c5e3a81f9e < small-entry" 0,73 "Save small entry to slot 2"
+        rlRun "rm -f \$rlRun_LOG" 0
+        rlRun "luksmeta load -d ${LUKS_DEVICE} -s 1 -u 70e213ff-61fb-4dae-847e-d67b593f230b > large-verify" 0 "Load original large entry back"
+        rlRun "diff large-entry large-verify" 0 "Verify the large entry in slot 1 is not corrupted"
+        rlRun "cryptsetup open ${LUKS_DEVICE} ${DEVNAME} <<< ${LUKS_PW}" 0 "Open LUKS device for verification"
+        rlRun "mount /dev/mapper/${DEVNAME} /mnt" 0 "Mounting the device for verification"
+        rlRun "test $(cat /mnt/luks1-test) = redhat" 0 "Check the encrypted payload is not corrupted"
+        rlRun "umount /mnt" 0 "Umounting the device"
+        rlRun "cryptsetup close ${DEVNAME}" 0 "Closing the LUKS device"
     rlPhaseEnd
 
     rlPhaseStartCleanup
