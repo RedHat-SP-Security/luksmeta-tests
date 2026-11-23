@@ -90,7 +90,7 @@ rlJournalStart
         rlRun "dd if=/dev/urandom of=large-entry bs=4096 count=4" 0 "Create 16KB file (larger than 2 pages/8192 bytes)"
         rlRun "luksmeta save -d ${LUKS_DEVICE} -s 1 -u 70e213ff-61fb-4dae-847e-d67b593f230b < large-entry" 0 "Save 16KB entry to slot 1"
         rlRun "dd if=/dev/urandom of=small-entry bs=512 count=1" 0 "Create 512B file for overlap attempt"
-        rlRun -s "luksmeta save -d ${LUKS_DEVICE} -s 2 -u ab4a6a22-15e5-4f92-b3c2-d7c5e3a81f9e < small-entry" 0,73 "Save small entry to slot 2"
+        rlRun -s "luksmeta save -d ${LUKS_DEVICE} -s 2 -u ab4a6a22-15e5-4f92-b3c2-d7c5e3a81f9e < small-entry" 0 "Save small entry to slot 2 (must succeed, placed after the existing entry)"
         rlRun "rm -f \$rlRun_LOG" 0
         rlRun "luksmeta load -d ${LUKS_DEVICE} -s 1 -u 70e213ff-61fb-4dae-847e-d67b593f230b > large-verify" 0 "Load original large entry back"
         rlRun "diff large-entry large-verify" 0 "Verify the large entry in slot 1 is not corrupted"
