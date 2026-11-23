@@ -4,28 +4,43 @@
 #
 #   runtest.sh of /Security/crafted-header-slot-range
 #   Description: Test that crafted out-of-gap slot ranges in luksmeta
-#                header do not corrupt LUKS1 encrypted payload
+#                headers are rejected (exit 72, "appears corrupt")
+#                without corrupting the LUKS1 encrypted payload
 #   Author: Adam Prikryl <aprikryl@redhat.com>
 #
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #
 #   Copyright (c) 2026 Red Hat, Inc. All rights reserved.
 #
-#   This copyrighted material is made available to anyone wishing
-#   to use, modify, copy, or redistribute it subject to the terms
-#   and conditions of the GNU General Public License version 2.
+#   This copyrighted material is made available to anyone wishing to use,
+#   modify, copy, or redistribute it subject to the terms and conditions
+#   of the GNU General Public License version 2.
 #
-#   This program is distributed in the hope that it will be
-#   useful, but WITHOUT ANY WARRANTY; without even the implied
-#   warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
-#   PURPOSE. See the GNU General Public License for more details.
+#   This program is distributed in the hope that it will be useful, but
+#   WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+#   General Public License for more details.
 #
-#   You should have received a copy of the GNU General Public
-#   License along with this program; if not, write to the Free
-#   Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
-#   Boston, MA 02110-1301, USA.
+#   You should have received a copy of the GNU General Public License
+#   along with this program; if not, write to the Free Software
+#   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+#   02110-1301, USA.
 #
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#
+# NOTE on expected exit codes: when read_header() rejects a crafted
+# header with -EINVAL, the luksmeta CLI reports "LUKSMeta data appears
+# corrupt" and exits with EX_OSFILE (72). Vulnerable code accepts the
+# crafted header instead and performs the (misplaced) operation, so
+# these phases must expect exactly 72 on fixed code.
+#
+# NOTE on crafting values: read_header() checks, per occupied slot,
+# offset > sizeof(lm_t) (= 272) and length <= gap - 4096 (the page-
+# aligned lm_t header area), both before and after the fix. The fix
+# adds offset + length <= gap (computed in uint64_t). A craft that
+# actually exercises the missing check must pass the two pre-existing
+# checks while exceeding the gap: offset=8192 with length=gap-4096
+# ends at gap+4096.
 
 . /usr/share/beakerlib/beakerlib.sh || exit 1
 
@@ -58,18 +73,28 @@ rlJournalStart
 
         cat > patch_header.py << 'PYEOF'
 #!/usr/bin/env python3
-"""Patch luksmeta header to craft out-of-gap slot ranges for CVE testing.
+"""Patch luksmeta header to craft slot ranges for CVE testing.
 
-luksmeta on-disk header layout (272 bytes total):
+luksmeta on-disk header layout (272 bytes total, integers big-endian):
   bytes  0-7:   magic "LUKSMETA"
-  bytes  8-11:  version (big-endian uint32, value 1)
-  bytes 12-15:  CRC32C of header (big-endian uint32)
+  bytes  8-11:  version (uint32, value 1)
+  bytes 12-15:  CRC32C of header (uint32, computed with the field zeroed)
   bytes 16-271: 8 slots x 32 bytes each:
-    bytes 0-15:  UUID (16 bytes, all-zero = empty)
-    bytes 16-19: offset from hole start (big-endian uint32)
-    bytes 20-23: data length (big-endian uint32)
-    bytes 24-27: CRC32C of slot data (big-endian uint32)
-    bytes 28-31: reserved
+    bytes  0-15:  UUID (16 bytes, all-zero = empty slot)
+    bytes 16-19:  offset from hole start (uint32)
+    bytes 20-23:  data length (uint32)
+    bytes 24-27:  CRC32C of slot data (uint32)
+    bytes 28-31:  reserved
+
+Actions:
+  find DEVICE SEARCH_LIMIT
+      Print the byte offset of the luksmeta header ("LUKSMETA" magic).
+  crc FILE
+      Print the CRC32C of FILE's contents, for crafting a slot data
+      CRC that matches bytes actually stored on the device.
+  patch DEVICE SLOT OFFSET LENGTH SEARCH_LIMIT [DATACRC]
+      Patch SLOT with OFFSET/LENGTH (and DATACRC, default 0x12345678),
+      recomputing the header CRC32C so the header passes validation.
 """
 import struct
 import sys
@@ -105,11 +130,16 @@ def main():
             sys.exit(1)
         print(pos)
 
+    elif action == 'crc':
+        with open(device, 'rb') as f:
+            print('0x%08x' % crc32c(f.read()))
+
     elif action == 'patch':
         slot = int(sys.argv[3])
         new_offset = int(sys.argv[4])
         new_length = int(sys.argv[5])
         search_limit = int(sys.argv[6])
+        data_crc = int(sys.argv[7], 0) if len(sys.argv) > 7 else 0x12345678
 
         with open(device, 'rb') as f:
             data = f.read(search_limit)
@@ -124,7 +154,7 @@ def main():
 
         struct.pack_into('>I', header, s + 16, new_offset)
         struct.pack_into('>I', header, s + 20, new_length)
-        struct.pack_into('>I', header, s + 24, 0x12345678)
+        struct.pack_into('>I', header, s + 24, data_crc)
 
         struct.pack_into('>I', header, 12, 0)
         new_crc = crc32c(bytes(header))
@@ -134,29 +164,67 @@ def main():
             f.seek(pos)
             f.write(header)
 
-        print("Patched slot %d: offset=%d length=%d header_pos=%d crc=0x%08x"
-              % (slot, new_offset, new_length, pos, new_crc))
+        print("Patched slot %d: offset=%d length=%d datacrc=0x%08x header_pos=%d crc=0x%08x"
+              % (slot, new_offset, new_length, data_crc, pos, new_crc))
 
 if __name__ == '__main__':
     main()
 PYEOF
     rlPhaseEnd
 
-    rlPhaseStartTest "Wipe with out-of-gap slot range does not corrupt payload"
+    rlPhaseStartTest "Positive control: in-bounds crafted slot is accepted"
         rlRun "luksmeta init -f -d ${LUKS_DEVICE}" 0 "Initialize luksmeta"
 
         HOLE_OFFSET=$(python3 patch_header.py find ${LUKS_DEVICE} ${PAYLOAD_OFFSET})
         GAP_SIZE=$((PAYLOAD_OFFSET - HOLE_OFFSET))
         rlLog "Hole offset: ${HOLE_OFFSET}, gap size: ${GAP_SIZE}, payload: ${PAYLOAD_OFFSET}"
 
-        # Craft slot 2 with offset+length extending 4096 bytes past the gap into payload
-        CRAFT_OFFSET=4096
-        CRAFT_LENGTH=$((GAP_SIZE - 4096 + 4096))
+        # In-bounds craft: slot 4 at offset 8192 (past the page-aligned lm_t
+        # header area) holding 4096 bytes of real data with a matching data
+        # CRC. Must be accepted by fixed and vulnerable code alike; it proves
+        # the patching machinery produces headers that pass read_header().
+        rlRun "dd if=/dev/urandom of=ctrl-data bs=4096 count=1" 0 "Create 4KB control data"
+        rlRun "dd if=ctrl-data of=${LUKS_DEVICE} bs=1 seek=$((HOLE_OFFSET + 8192)) conv=notrunc" 0 \
+            "Write control data into the gap at offset 8192"
+        CTRL_CRC=$(python3 patch_header.py crc ctrl-data)
+        rlRun "python3 patch_header.py patch ${LUKS_DEVICE} 4 8192 4096 ${PAYLOAD_OFFSET} ${CTRL_CRC}" 0 \
+            "Craft in-bounds slot 4 with matching data CRC"
+        rlRun "luksmeta load -d ${LUKS_DEVICE} -s 4 -u ${CRAFT_UUID} > ctrl-verify" 0 \
+            "Load from in-bounds crafted slot 4 (must succeed)"
+        rlRun "diff ctrl-data ctrl-verify" 0 "Verify control data round-trips"
+    rlPhaseEnd
+
+    rlPhaseStartTest "Wipe with out-of-gap slot range is rejected"
+        rlRun "luksmeta init -f -d ${LUKS_DEVICE}" 0 "Re-initialize luksmeta"
+
+        HOLE_OFFSET=$(python3 patch_header.py find ${LUKS_DEVICE} ${PAYLOAD_OFFSET})
+        GAP_SIZE=$((PAYLOAD_OFFSET - HOLE_OFFSET))
+
+        # Save a valid entry to slot 1 to verify it is not affected. On a
+        # fresh header the allocator places it at offset 4096 from the hole.
+        rlRun "dd if=/dev/urandom of=slot1-data bs=4096 count=1" 0 "Create 4KB data for slot 1"
+        rlRun "luksmeta save -d ${LUKS_DEVICE} -s 1 -u 70e213ff-61fb-4dae-847e-d67b593f230b < slot1-data" 0 \
+            "Save valid entry to slot 1"
+
+        # Out-of-gap craft: passes both pre-existing checks (offset 8192 > 272,
+        # length gap-4096 <= maxlen), endpoint gap+4096 lies 4096 bytes past
+        # the gap in the encrypted payload. Fixed code rejects the header
+        # (-EINVAL -> exit 72); vulnerable code zeroes the payload range.
+        CRAFT_OFFSET=8192
+        CRAFT_LENGTH=$((GAP_SIZE - 4096))
         rlRun "python3 patch_header.py patch ${LUKS_DEVICE} 2 ${CRAFT_OFFSET} ${CRAFT_LENGTH} ${PAYLOAD_OFFSET}" 0 \
             "Craft slot 2 with range extending past gap into encrypted payload"
 
-        rlRun "luksmeta wipe -d ${LUKS_DEVICE} -s 2 -u ${CRAFT_UUID} -f" 0,1,73,74 \
-            "Wipe crafted slot 2 (should be rejected or harmless)"
+        rlRun -s "luksmeta wipe -d ${LUKS_DEVICE} -s 2 -u ${CRAFT_UUID} -f" 72 \
+            "Wipe crafted slot 2 (must be rejected as corrupt)"
+        rlAssertGrep "appears corrupt" "${rlRun_LOG}"
+        rlRun "rm -f \$rlRun_LOG" 0
+
+        # While the crafted slot is in the header, luksmeta load fails for
+        # ALL slots, so verify slot 1's raw bytes on disk directly.
+        rlRun "dd if=${LUKS_DEVICE} of=slot1-raw bs=1 skip=$((HOLE_OFFSET + 4096)) count=4096" 0 \
+            "Read slot 1 raw bytes from device"
+        rlRun "diff slot1-data slot1-raw" 0 "Verify slot 1 metadata not corrupted"
 
         rlRun "cryptsetup open ${LUKS_DEVICE} ${DEVNAME} <<< ${LUKS_PW}" 0 "Open LUKS device"
         rlRun "mount /dev/mapper/${DEVNAME} /mnt" 0 "Mounting the device for verification"
@@ -165,18 +233,28 @@ PYEOF
         rlRun "cryptsetup close ${DEVNAME}" 0 "Closing the LUKS device"
     rlPhaseEnd
 
-    rlPhaseStartTest "Load with out-of-gap slot range fails gracefully"
+    rlPhaseStartTest "Load with out-of-gap slot range is rejected"
         rlRun "luksmeta init -f -d ${LUKS_DEVICE}" 0 "Re-initialize luksmeta"
 
         HOLE_OFFSET=$(python3 patch_header.py find ${LUKS_DEVICE} ${PAYLOAD_OFFSET})
         GAP_SIZE=$((PAYLOAD_OFFSET - HOLE_OFFSET))
-        CRAFT_OFFSET=4096
-        CRAFT_LENGTH=$((GAP_SIZE - 4096 + 4096))
-        rlRun "python3 patch_header.py patch ${LUKS_DEVICE} 2 ${CRAFT_OFFSET} ${CRAFT_LENGTH} ${PAYLOAD_OFFSET}" 0 \
-            "Craft slot 2 for load test"
 
-        rlRun -s "luksmeta load -d ${LUKS_DEVICE} -s 2 -u ${CRAFT_UUID}" 1,73,74 \
-            "Load from crafted slot 2 should fail gracefully"
+        # Same out-of-gap craft, but with a slot data CRC matching the bytes
+        # actually stored in the out-of-gap range. On vulnerable code the load
+        # then SUCCEEDS (exit 0) and returns device data from outside the
+        # metadata area; on fixed code the header is rejected before any
+        # read (exit 72).
+        CRAFT_OFFSET=8192
+        CRAFT_LENGTH=$((GAP_SIZE - 4096))
+        rlRun "dd if=${LUKS_DEVICE} of=oog-data bs=1 skip=$((HOLE_OFFSET + CRAFT_OFFSET)) count=${CRAFT_LENGTH}" 0 \
+            "Extract the bytes of the out-of-gap range"
+        OOG_CRC=$(python3 patch_header.py crc oog-data)
+        rlRun "python3 patch_header.py patch ${LUKS_DEVICE} 2 ${CRAFT_OFFSET} ${CRAFT_LENGTH} ${PAYLOAD_OFFSET} ${OOG_CRC}" 0 \
+            "Craft slot 2 with data CRC matching the out-of-gap bytes"
+
+        rlRun -s "luksmeta load -d ${LUKS_DEVICE} -s 2 -u ${CRAFT_UUID}" 72 \
+            "Load from crafted slot 2 (must be rejected as corrupt)"
+        rlAssertGrep "appears corrupt" "${rlRun_LOG}"
         rlRun "rm -f \$rlRun_LOG" 0
 
         rlRun "cryptsetup open ${LUKS_DEVICE} ${DEVNAME} <<< ${LUKS_PW}" 0 "Open LUKS device"
@@ -186,30 +264,27 @@ PYEOF
         rlRun "cryptsetup close ${DEVNAME}" 0 "Closing the LUKS device"
     rlPhaseEnd
 
-    rlPhaseStartTest "Wrapping slot endpoint does not misposition header rewrite"
+    rlPhaseStartTest "Wrapping slot endpoint is rejected"
         rlRun "luksmeta init -f -d ${LUKS_DEVICE}" 0 "Re-initialize luksmeta"
 
-        # Save valid metadata to slot 1 for later integrity check
-        rlRun "dd if=/dev/urandom of=slot1-data bs=4096 count=1" 0 "Create 4KB data for slot 1"
-        rlRun "luksmeta save -d ${LUKS_DEVICE} -s 1 -u 70e213ff-61fb-4dae-847e-d67b593f230b < slot1-data" 0 \
-            "Save valid entry to slot 1"
-
-        HOLE_OFFSET=$(python3 patch_header.py find ${LUKS_DEVICE} ${PAYLOAD_OFFSET})
-        GAP_SIZE=$((PAYLOAD_OFFSET - HOLE_OFFSET))
-
-        # Craft slot 3 with large offset+length that could wrap uint32 or misposition seeks
-        CRAFT_OFFSET=$((GAP_SIZE - 4096))
-        CRAFT_LENGTH=8192
-        rlRun "python3 patch_header.py patch ${LUKS_DEVICE} 3 ${CRAFT_OFFSET} ${CRAFT_LENGTH} ${PAYLOAD_OFFSET}" 0 \
+        # Craft slot 3 near UINT32_MAX so the 32-bit sum offset+length wraps
+        # in luksmeta_wipe() (computed in 32-bit unsigned arithmetic),
+        # mispositioning both the zeroing and the subsequent header rewrite
+        # far past the end of the 512MB image. On vulnerable code the wipe
+        # "succeeds" (exit 0) and grows the image by ~4GB; on fixed code the
+        # range check (computed in uint64_t) rejects the header (exit 72).
+        CRAFT_OFFSET=$((0xFFFFFF00))
+        rlRun "python3 patch_header.py patch ${LUKS_DEVICE} 3 ${CRAFT_OFFSET} 512 ${PAYLOAD_OFFSET}" 0 \
             "Craft slot 3 with wrapping endpoint"
 
-        rlRun "luksmeta wipe -d ${LUKS_DEVICE} -s 3 -u ${CRAFT_UUID} -f" 0,1,73,74 \
-            "Wipe crafted slot 3 (wrapping endpoint)"
-
-        # Verify the luksmeta header is still readable and slot 1 data intact
-        rlRun "luksmeta load -d ${LUKS_DEVICE} -s 1 -u 70e213ff-61fb-4dae-847e-d67b593f230b > slot1-verify" 0 \
-            "Load slot 1 after wrapping wipe"
-        rlRun "diff slot1-data slot1-verify" 0 "Verify slot 1 metadata not corrupted by mispositioned header rewrite"
+        SIZE_BEFORE=$(stat -c %s ${LUKS_DEVICE})
+        rlRun -s "luksmeta wipe -d ${LUKS_DEVICE} -s 3 -u ${CRAFT_UUID} -f" 72 \
+            "Wipe crafted slot 3 (must be rejected as corrupt)"
+        rlAssertGrep "appears corrupt" "${rlRun_LOG}"
+        rlRun "rm -f \$rlRun_LOG" 0
+        SIZE_AFTER=$(stat -c %s ${LUKS_DEVICE})
+        rlRun "test ${SIZE_BEFORE} = ${SIZE_AFTER}" 0 \
+            "Verify image size unchanged (no mispositioned writes past EOF)"
 
         rlRun "cryptsetup open ${LUKS_DEVICE} ${DEVNAME} <<< ${LUKS_PW}" 0 "Open LUKS device"
         rlRun "mount /dev/mapper/${DEVNAME} /mnt" 0 "Mounting the device for verification"
