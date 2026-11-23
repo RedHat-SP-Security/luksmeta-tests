@@ -69,8 +69,11 @@ rlJournalStart
         rlRun "luksmeta init -f -d ${LUKS_DEVICE}" 0 "Re-initialize device with luksmeta"
         rlRun "dd if=/dev/urandom of=slot0-data bs=4096 count=1" 0 "Create 4KB file for slot 0"
         rlRun "luksmeta save -d ${LUKS_DEVICE} -s 0 -u cb6e8904-81e2-4c7e-9a1a-0c8c2d2b2e4f < slot0-data" 0 "Pre-populate slot 0 with metadata"
-        rlRun "dd if=/dev/urandom of=1M-file bs=1M count=1" 0 "Create 1MB file for the test"
-        rlRun -s "luksmeta save -d ${LUKS_DEVICE} -s 1 -u 70e213ff-61fb-4dae-847e-d67b593f230b < 1M-file" 73 "Store large metadata to slot 1 with slot 0 occupied"
+        # 24576 B = exact gap capacity (LUKS1, key-size 512, 4000 AF stripes -> 28672 B gap).
+        # Sizes in (20480, 24576] exercise the shifted-boundary bug: pre-fix code accepts
+        # the save and writes past the gap into the payload; fixed code rejects it.
+        rlRun "dd if=/dev/urandom of=24k-file bs=4096 count=6" 0 "Create 24KB file (exact gap capacity) for the test"
+        rlRun -s "luksmeta save -d ${LUKS_DEVICE} -s 1 -u 70e213ff-61fb-4dae-847e-d67b593f230b < 24k-file" 73 "Store capacity-sized metadata to slot 1 with slot 0 occupied"
         rlAssertGrep "Insufficient space in the LUKS header" "${rlRun_LOG}"
         rlRun "rm -f \$rlRun_LOG" 0
         rlRun "luksmeta load -d ${LUKS_DEVICE} -s 0 -u cb6e8904-81e2-4c7e-9a1a-0c8c2d2b2e4f > slot0-verify" 0 "Load slot 0 metadata back"
