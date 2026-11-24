@@ -57,14 +57,20 @@ rlJournalStart
         rlRun "tmp=\$(mktemp -d)" 0 "Create tmp directory"
         rlRun "pushd \${tmp}"
 
+        # Unique mountpoint under this run's tmp directory, so concurrent
+        # runs in the same mount namespace cannot unmount each other's
+        # filesystems or verify the wrong device.
+        MOUNTPOINT="${tmp}/mnt"
+        rlRun "mkdir -p ${MOUNTPOINT}" 0 "Create unique mountpoint"
+
         rlRun "LUKS_DEVICE=\$(realpath luks-device)"
         rlRun "fallocate -l512m ${LUKS_DEVICE}"
         rlRun "echo ${LUKS_PW} | cryptsetup luksFormat --type luks1 --batch-mode --force-password --pbkdf-force-iterations 1000 --key-size 512 ${LUKS_DEVICE}"
         rlRun "cryptsetup open ${LUKS_DEVICE} ${DEVNAME} <<< ${LUKS_PW}" 0 "Open LUKS device"
         rlRun "mkfs.xfs /dev/mapper/${DEVNAME}" 0 "Creating xfs filesystem"
-        rlRun "mount /dev/mapper/${DEVNAME} /mnt" 0 "Mounting device"
-        rlRun "echo redhat > /mnt/luks1-test" 0 "Creating test file"
-        rlRun "umount /mnt" 0 "Umounting the device"
+        rlRun "mount /dev/mapper/${DEVNAME} ${MOUNTPOINT}" 0 "Mounting device"
+        rlRun "echo redhat > ${MOUNTPOINT}/luks1-test" 0 "Creating test file"
+        rlRun "umount ${MOUNTPOINT}" 0 "Umounting the device"
         rlRun "cryptsetup close ${DEVNAME}" 0 "Closing the LUKS device"
 
         PAYLOAD_OFFSET_SECTORS=$(cryptsetup luksDump ${LUKS_DEVICE} | awk '/Payload offset:/{print $3}')
@@ -227,9 +233,9 @@ PYEOF
         rlRun "diff slot1-data slot1-raw" 0 "Verify slot 1 metadata not corrupted"
 
         rlRun "cryptsetup open ${LUKS_DEVICE} ${DEVNAME} <<< ${LUKS_PW}" 0 "Open LUKS device"
-        rlRun "mount /dev/mapper/${DEVNAME} /mnt" 0 "Mounting the device for verification"
-        rlRun "test \$(cat /mnt/luks1-test) = redhat" 0 "Verify encrypted payload not corrupted after wipe"
-        rlRun "umount /mnt" 0 "Umounting the device"
+        rlRun "mount /dev/mapper/${DEVNAME} ${MOUNTPOINT}" 0 "Mounting the device for verification"
+        rlRun "test \$(cat ${MOUNTPOINT}/luks1-test) = redhat" 0 "Verify encrypted payload not corrupted after wipe"
+        rlRun "umount ${MOUNTPOINT}" 0 "Umounting the device"
         rlRun "cryptsetup close ${DEVNAME}" 0 "Closing the LUKS device"
     rlPhaseEnd
 
@@ -258,9 +264,9 @@ PYEOF
         rlRun "rm -f \$rlRun_LOG" 0
 
         rlRun "cryptsetup open ${LUKS_DEVICE} ${DEVNAME} <<< ${LUKS_PW}" 0 "Open LUKS device"
-        rlRun "mount /dev/mapper/${DEVNAME} /mnt" 0 "Mounting the device for verification"
-        rlRun "test \$(cat /mnt/luks1-test) = redhat" 0 "Verify encrypted payload not corrupted after load"
-        rlRun "umount /mnt" 0 "Umounting the device"
+        rlRun "mount /dev/mapper/${DEVNAME} ${MOUNTPOINT}" 0 "Mounting the device for verification"
+        rlRun "test \$(cat ${MOUNTPOINT}/luks1-test) = redhat" 0 "Verify encrypted payload not corrupted after load"
+        rlRun "umount ${MOUNTPOINT}" 0 "Umounting the device"
         rlRun "cryptsetup close ${DEVNAME}" 0 "Closing the LUKS device"
     rlPhaseEnd
 
@@ -287,14 +293,14 @@ PYEOF
             "Verify image size unchanged (no mispositioned writes past EOF)"
 
         rlRun "cryptsetup open ${LUKS_DEVICE} ${DEVNAME} <<< ${LUKS_PW}" 0 "Open LUKS device"
-        rlRun "mount /dev/mapper/${DEVNAME} /mnt" 0 "Mounting the device for verification"
-        rlRun "test \$(cat /mnt/luks1-test) = redhat" 0 "Verify encrypted payload not corrupted"
-        rlRun "umount /mnt" 0 "Umounting the device"
+        rlRun "mount /dev/mapper/${DEVNAME} ${MOUNTPOINT}" 0 "Mounting the device for verification"
+        rlRun "test \$(cat ${MOUNTPOINT}/luks1-test) = redhat" 0 "Verify encrypted payload not corrupted"
+        rlRun "umount ${MOUNTPOINT}" 0 "Umounting the device"
         rlRun "cryptsetup close ${DEVNAME}" 0 "Closing the LUKS device"
     rlPhaseEnd
 
     rlPhaseStartCleanup
-        rlRun "umount /mnt ||:" 0 "Umounting the device, if mounted"
+        rlRun "umount ${MOUNTPOINT} ||:" 0 "Umounting the device, if mounted"
         rlRun "cryptsetup close ${DEVNAME} ||:" 0 "Closing the LUKS device, if opened"
         rlRun "popd"
         rlRun "rm -r \${tmp}" 0 "Remove tmp directory"
