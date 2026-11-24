@@ -111,7 +111,15 @@ rlJournalStart
     rlPhaseEnd
 
     rlPhaseStartTest "Wipe with out-of-gap slot range is rejected"
-        rlRun "luksmeta init -f -d ${LUKS_DEVICE}" 0 "Re-initialize luksmeta"
+        # Nuke is required here: the positive-control phase leaves a valid
+        # header (crafted slot 4 at offset 8192) behind, and init -f is a
+        # no-op on a valid header (luksmeta_init returns -EALREADY, which
+        # cmd_init maps to exit 0). Without the nuke, the slot 1 placement
+        # below only works because the control slot happens to sit at 8192
+        # rather than 4096. The load and wrapping phases are unaffected:
+        # their headers are corrupt at that point, so init genuinely
+        # rewrites.
+        rlRun "luksmeta init -f -n -d ${LUKS_DEVICE}" 0 "Nuke and re-initialize luksmeta"
 
         HOLE_OFFSET=$(python3 ${TESTDIR}/patch_header.py find ${LUKS_DEVICE} ${PAYLOAD_OFFSET})
         GAP_SIZE=$((PAYLOAD_OFFSET - HOLE_OFFSET))
