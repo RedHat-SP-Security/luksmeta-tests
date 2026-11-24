@@ -44,7 +44,7 @@
 
 . /usr/share/beakerlib/beakerlib.sh || exit 1
 
-PACKAGES="luksmeta cryptsetup util-linux xfsprogs python3"
+PACKAGES="luksmeta cryptsetup util-linux xfsprogs"
 LUKS_PW=luks
 DEVNAME="luks-${RANDOM}"
 CRAFT_UUID="deadbeef-dead-beef-dead-beefdeadbeef"
@@ -52,6 +52,11 @@ CRAFT_UUID="deadbeef-dead-beef-dead-beefdeadbeef"
 rlJournalStart
     rlPhaseStartSetup
         rlAssertRpm --all
+        # python3 is not a real package name on all distros (e.g. RHEL 8
+        # ships it as python36/platform-python), so check the interpreter
+        # itself instead of the rpm. Installation is handled by the
+        # "recommend" list in main.fmf.
+        rlRun "python3 --version" 0 "Check python3 interpreter is available"
         rlRun "set -o pipefail"
 
         # Test case directory (patch_header.py lives next to runtest.sh);
