@@ -12,3 +12,4 @@ recommend:
 framework: beakerlib
 tag:
   - Tier1
+  - CI-Tier-1
