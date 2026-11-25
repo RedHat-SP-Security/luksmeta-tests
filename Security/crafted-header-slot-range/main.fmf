@@ -1,0 +1,15 @@
+summary: Test that crafted out-of-gap slot ranges do not corrupt LUKS1 payload
+contact: Adam Prikryl <aprikryl@redhat.com>
+component:
+  - luksmeta
+test: ./runtest.sh
+recommend:
+  - luksmeta
+  - cryptsetup
+  - util-linux
+  - xfsprogs
+  - python3
+framework: beakerlib
+tag:
+  - Tier1
+  - CI-Tier-1
